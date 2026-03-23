@@ -1,0 +1,66 @@
+name: AI Daily Signal
+
+on:
+  schedule:
+    # 每天 UTC 01:00（北京时间 09:00）
+    - cron: '0 1 * * *'
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  generate-daily-signal:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Generate daily signal
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # 收集昨天全天的新闻（北京时间 00:00-23:59）
+          YESTERDAY=$(TZ=Asia/Shanghai date -d "yesterday" +%Y-%m-%d 2>/dev/null || TZ=Asia/Shanghai date -v-1d +%Y-%m-%d)
+          YEAR=$(echo "$YESTERDAY" | cut -d- -f1)
+          MONTH=$(echo "$YESTERDAY" | cut -d- -f2)
+          FILE_PATH="${YEAR}/${MONTH}/${YESTERDAY}.md"
+
+          # 如果该日期的文件已存在则跳过
+          if [ -f "$FILE_PATH" ]; then
+            echo "Daily signal for ${YESTERDAY} already exists, skipping."
+            exit 0
+          fi
+
+          mkdir -p "${YEAR}/${MONTH}"
+
+          # 使用 Claude CLI 生成日报
+          claude --print --dangerously-skip-permissions \
+            "你是 AIDailySignal 的新闻编辑。请搜索 ${YESTERDAY} 全天（00:00-23:59 北京时间）的AI相关新闻（特别是AI Coding领域），生成该日AI日报。执行以下搜索（在关键词中包含日期 ${YESTERDAY}）：1. AI coding news ${YESTERDAY} 2. AI 编程 新闻 ${YESTERDAY} 3. Claude Copilot Cursor AI coding assistant ${YESTERDAY} 4. artificial intelligence news ${YESTERDAY} 5. 大模型 AI 最新进展 ${YESTERDAY}。只收录 ${YESTERDAY} 当天发布的新闻。筛选8-15条重要新闻，按以下分类整理：重要新闻、AI 编程与工具、研究与技术、行业动态。每条新闻格式：### 标题 简要概述（2-3句话）来源：[来源名称](链接)。请只输出 markdown 内容。文件开头为：# AI 日报 - ${YESTERDAY}，包含四个分类章节，末尾加更新时间。" > "$FILE_PATH"
+
+      - name: Commit and push
+        run: |
+          YESTERDAY=$(TZ=Asia/Shanghai date -d "yesterday" +%Y-%m-%d 2>/dev/null || TZ=Asia/Shanghai date -v-1d +%Y-%m-%d)
+          YEAR=$(echo "$YESTERDAY" | cut -d- -f1)
+          MONTH=$(echo "$YESTERDAY" | cut -d- -f2)
+          FILE_PATH="${YEAR}/${MONTH}/${YESTERDAY}.md"
+
+          if [ ! -f "$FILE_PATH" ]; then
+            echo "No file generated, skipping commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FILE_PATH"
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "daily signal: ${YESTERDAY}"
+          git push
